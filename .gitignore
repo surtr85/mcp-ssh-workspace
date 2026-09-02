@@ -1,0 +1,5 @@
+/mcp-ssh-workspace
+result
+result-*
+.env
+.direnv
