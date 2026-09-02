@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -60,8 +61,8 @@ func (c *Client) RunCommand(cmd string, targetCwd string, isDaemon bool, waitMs 
 		markerExit,
 		markerCwd,
 	)
-
-	fullShellCmd := fmt.Sprintf("bash -c %q", wrappedCmd)
+	encodedCmd := base64.StdEncoding.EncodeToString([]byte(wrappedCmd))
+	fullShellCmd := fmt.Sprintf("echo %s | base64 -d | sh", encodedCmd)
 
 	if isDaemon {
 		// Start immediately in background
