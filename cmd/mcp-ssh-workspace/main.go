@@ -17,11 +17,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	client, err := sshclient.NewClient(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "SSH connection error: %v\n", err)
-		os.Exit(1)
-	}
+	client := sshclient.NewClient(cfg)
 	defer client.Close()
 
 	s := server.NewMCPServer(

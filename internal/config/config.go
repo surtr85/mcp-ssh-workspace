@@ -2,7 +2,6 @@ package config
 
 import (
 	"flag"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -52,10 +51,14 @@ func Parse() (*Config, error) {
 		}
 	}
 
-	if cfg.Host == "" {
-		return nil, fmt.Errorf("missing remote host: specify --host, [user@]host argument, or set SSH_HOST")
+	if cfg.Host != "" {
+		ResolveHostConfig(cfg)
 	}
 
+	return cfg, nil
+}
+
+func ResolveHostConfig(cfg *Config) {
 	homeDir, _ := os.UserHomeDir()
 	sshConfigFile := filepath.Join(homeDir, ".ssh", "config")
 	if f, err := os.Open(sshConfigFile); err == nil {
@@ -113,8 +116,6 @@ func Parse() (*Config, error) {
 			}
 		}
 	}
-
-	return cfg, nil
 }
 
 func (c *Config) Addr() string {

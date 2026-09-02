@@ -19,6 +19,43 @@ func RegisterTools(s *server.MCPServer, client *sshclient.Client) {
 }
 
 func registerCommandTools(s *server.MCPServer, client *sshclient.Client) {
+	// 0. remote_connect
+	connectTool := mcp.NewTool("remote_connect",
+		mcp.WithDescription("Connect to a remote SSH host dynamically. Resolves ~/.ssh/config aliases automatically."),
+		mcp.WithString("Host", mcp.Required(), mcp.Description("Remote SSH host, IP, or ~/.ssh/config alias.")),
+		mcp.WithInteger("Port", mcp.Description("SSH port (default 22).")),
+		mcp.WithString("User", mcp.Description("SSH username.")),
+		mcp.WithString("KeyPath", mcp.Description("Path to private key file.")),
+		mcp.WithString("Password", mcp.Description("SSH password if not using key.")),
+	)
+
+	s.AddTool(connectTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		host, err := request.RequireString("Host")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		port := request.GetInt("Port", 22)
+		user := request.GetString("User", "")
+		keyPath := request.GetString("KeyPath", "")
+		password := request.GetString("Password", "")
+
+		if err := client.ConnectTo(host, port, user, keyPath, password); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to connect to %s: %v", host, err)), nil
+		}
+
+		return mcp.NewToolResultText(fmt.Sprintf("Successfully connected to %s. CWD: %s", host, client.GetCwd())), nil
+	})
+
+	// 0.1 remote_disconnect
+	disconnectTool := mcp.NewTool("remote_disconnect",
+		mcp.WithDescription("Disconnect from the current remote SSH host."),
+	)
+
+	s.AddTool(disconnectTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		client.Close()
+		return mcp.NewToolResultText("Disconnected from remote SSH host."), nil
+	})
+
 	// 1. remote_run_command
 	runCmdTool := mcp.NewTool("remote_run_command",
 		mcp.WithDescription("Execute a bash command on the remote host with persistent working directory (CWD) and optional background task management."),

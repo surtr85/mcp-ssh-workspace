@@ -23,18 +23,47 @@ type Client struct {
 	currentCwd string
 }
 
-func NewClient(cfg *config.Config) (*Client, error) {
+func NewClient(cfg *config.Config) *Client {
 	c := &Client{
 		cfg:        cfg,
 		taskMgr:    NewTaskManager(),
 		currentCwd: cfg.WorkDir,
 	}
 
-	if err := c.Connect(); err != nil {
-		return nil, err
+	if cfg.Host != "" {
+		if err := c.Connect(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Initial SSH connection to %s failed: %v\n", cfg.Host, err)
+		}
 	}
 
-	return c, nil
+	return c
+}
+
+func (c *Client) IsConnected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sshClient != nil && c.sftpClient != nil
+}
+
+func (c *Client) ConnectTo(host string, port int, user, keyPath, password string) error {
+	c.Close()
+
+	newCfg := &config.Config{
+		Host:     host,
+		Port:     port,
+		User:     user,
+		KeyPath:  keyPath,
+		Password: password,
+		UseAgent: true,
+	}
+	config.ResolveHostConfig(newCfg)
+
+	c.mu.Lock()
+	c.cfg = newCfg
+	c.currentCwd = newCfg.WorkDir
+	c.mu.Unlock()
+
+	return c.Connect()
 }
 
 func (c *Client) Connect() error {
@@ -109,6 +138,10 @@ func (c *Client) Connect() error {
 
 func (c *Client) EnsureConnected() error {
 	c.mu.Lock()
+	if c.cfg == nil || c.cfg.Host == "" {
+		c.mu.Unlock()
+		return fmt.Errorf("not connected to any remote SSH host: call 'remote_connect' with host and user first")
+	}
 	needReconnect := c.sshClient == nil
 	c.mu.Unlock()
 
