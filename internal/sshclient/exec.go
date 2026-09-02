@@ -62,7 +62,7 @@ func (c *Client) RunCommand(cmd string, targetCwd string, isDaemon bool, waitMs 
 		markerCwd,
 	)
 	encodedCmd := base64.StdEncoding.EncodeToString([]byte(wrappedCmd))
-	fullShellCmd := fmt.Sprintf("echo %s | base64 -d | sh", encodedCmd)
+	fullShellCmd := fmt.Sprintf("sh -c \"$(echo %s | base64 -d)\"", encodedCmd)
 
 	if isDaemon {
 		// Start immediately in background
