@@ -1,1 +1,0 @@
-{"nodes": [{"id": "$graphify-root$_vendor_github_com_google_uuid_doc_go", "label": "doc.go", "file_type": "code", "source_file": "vendor/github.com/google/uuid/doc.go", "source_location": "L1"}], "edges": [], "raw_calls": [], "go_imports": {}}

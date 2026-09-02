@@ -1,1 +1,0 @@
-{"nodes": [{"id": "$graphify-root$_vendor_golang_org_x_sys_windows_eventlog_go", "label": "eventlog.go", "file_type": "code", "source_file": "vendor/golang.org/x/sys/windows/eventlog.go", "source_location": "L1"}], "edges": [], "raw_calls": [], "go_imports": {}}

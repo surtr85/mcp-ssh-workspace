@@ -3,136 +3,149 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built with Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Nix Flake](https://img.shields.io/badge/Nix-Flake-5277C3?logo=nixos&logoColor=white)](flake.nix)
-[![MCP Protocol](https://img.shields.io/badge/MCP-Compliant-8A2BE2)](https://modelcontextprotocol.io)
+[![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05%20%7C%202026--07--28-8A2BE2)](https://modelcontextprotocol.io)
 
-An ultra-fast, native-like **SSH Workspace Model Context Protocol (MCP)** server tailored specifically for AI coding assistants (Claude Desktop, Cursor, Antigravity, Cline, and custom agents).
+An ultra-fast, native-like **SSH Workspace Model Context Protocol (MCP)** server engineered specifically for autonomous AI coding agents (Claude Desktop, Antigravity, Cursor, Cline, Zed, and custom agents).
 
-Instead of treating your remote machine like a dumb, stateless `ssh exec` target, **`mcp-ssh-workspace`** exposes the **exact workspace primitives** that modern AI coding agents need to navigate, inspect, edit, and run code seamlessly on remote servers—as if it were their local host.
+Instead of treating remote servers as dumb, stateless `ssh exec` targets, **`mcp-ssh-workspace`** mirrors the **exact surgical primitives** that coding agents use on local machines: stateful bash execution, persistent directory tracking, token-safe line slicing, atomic chunk file editing, and background daemon task supervision—with **zero remote installation footprint**.
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    subgraph Local["Host Machine"]
+        AI["🤖 AI Coding Agent<br/>(Claude / Antigravity / Cursor)"]
+        Server["⚡ mcp-ssh-workspace<br/>(Go Daemon / Stdio)"]
+        Config["🔑 ~/.ssh/config &<br/>SSH Agent Socket"]
+
+        AI <== "MCP JSON-RPC (stdio)" ==> Server
+        Config -.-> Server
+    end
+
+    subgraph Remote["Remote Server (Any POSIX / Linux / Cloud VPS)"]
+        SSHD["🔒 OpenSSH Server<br/>(:22 / SFTP Subsystem)"]
+        Shell["🐚 Bash Shell<br/>(Tracked CWD)"]
+        FS["📁 Remote Filesystem<br/>(Atomic SFTP)"]
+        Proc["⚙️ Background Tasks<br/>(Tracked PIDs)"]
+
+        SSHD --> Shell
+        SSHD --> FS
+        SSHD --> Proc
+    end
+
+    Server <== "Persistent Multiplexed SSH Connection (<10ms)" ==> SSHD
+```
 
 ---
 
 ## ⚡ Why `mcp-ssh-workspace`?
 
-Existing SSH MCP servers suffer from critical flaws when paired with AI agents:
-
-| Feature | Generic SSH MCP Servers | `mcp-ssh-workspace` |
+| Feature | Generic SSH MCP Solutions | `mcp-ssh-workspace` |
 | :--- | :--- | :--- |
-| **Shell State (`cwd` & env)** | ❌ **Stateless:** Every command runs in a new shell. `cd /path` vanishes. | ✅ **Persistent:** Session tracks `cwd` and preserves state across calls. |
-| **File Reading** | ❌ Dumps entire files with `cat` (blows context limits). | ✅ **Line-slicing:** `StartLine`, `EndLine`, byte offsets, and pagination. |
-| **File Editing** | ❌ Fragile bash `sed`/`cat << EOF` that breaks on quotes/escapes. | ✅ **Surgical replacement:** Exact chunk search-and-replace via atomic SFTP. |
-| **Long-Running Commands** | ❌ Hangs and times out on background daemons or dev servers. | ✅ **Background tasks:** Async execution with `TaskId`, `kill`, and `send_input`. |
-| **Latency** | ❌ Re-authenticates and negotiates SSH handshake on every call (~1s). | ✅ **Connection pooling:** Persistent multiplexed SSH & SFTP session (<10ms). |
-| **Remote Footprint** | ❌ Requires Node/Python or custom daemons on remote. | ✅ **Zero footprint:** Requires only standard OpenSSH and SFTP. |
+| **Shell State (`cwd` & env)** | ❌ **Stateless:** Every call opens a fresh shell. `cd /app` is lost immediately. | ✅ **Stateful Session:** Tracks `cwd` automatically across all calls. |
+| **Connection Overhead** | ❌ Re-authenticates and negotiates SSH handshake on every tool call (~1s). | ✅ **Multiplexed Pool:** Single persistent SSH/SFTP channel (<10ms latency). |
+| **File Reading** | ❌ Dumps entire files with `cat` (overflows model context window). | ✅ **Token-Capped Slicing:** `StartLine`, `EndLine`, byte offsets, line numbering. |
+| **File Editing** | ❌ Fragile `sed` or `cat << EOF` that fails on quotes, escapes, or binary files. | ✅ **Surgical Replacement:** Atomic chunk find-and-replace over binary SFTP. |
+| **Long Commands / Daemons** | ❌ Blocks indefinitely or times out on build scripts and dev servers. | ✅ **Async Process Manager:** Auto-detaches to background task (`status`, `kill`, `stdin`). |
+| **Remote Host Setup** | ❌ Requires Python, Node.js, or server-side agent daemons. | ✅ **Zero Footprint:** Requires only standard OpenSSH and SFTP subsystem. |
+| **Host Connectivity** | ❌ Host is hardcoded at boot; crashes if server is offline. | ✅ **Dual Mode:** Static host via CLI/env **OR** dynamic `remote_connect` in-flight. |
 
 ---
 
-## 🛠️ Provided Tools
+## 🛠️ The 11 Agent Tools
 
-`mcp-ssh-workspace` exposes 9 specialized tools to the AI agent:
+### 1. Connection & Session Control
+- **`remote_connect`**: Connect or switch to any SSH host dynamically at runtime. Automatically resolves host aliases, identity files, usernames, and ports from `~/.ssh/config`.
+- **`remote_disconnect`**: Gracefully close active SSH sessions and SFTP subsystems.
+- **`remote_session_info`**: Retrieve remote host OS (`/etc/os-release`, `uname`), hostname, current user, and persistent `cwd`.
 
-### 1. Terminal & Command Execution
-- **`remote_run_command`**: Run any command on the remote host. Respects the session working directory, returns clean `stdout`/`stderr` separation, real exit codes, and can automatically detach into a background task if execution exceeds `WaitMsBeforeAsync`.
-- **`remote_manage_task`**: Manage long-running remote processes (`list`, `status`, `kill`, `send_input` to stdin).
-- **`remote_session_info`**: Retrieve OS information (`uname`, `/etc/os-release`), hostname, current user, and active `cwd`.
+### 2. Terminal & Process Management
+- **`remote_run_command`**: Execute bash commands on the remote machine. Preserves session working directory, separates `stdout`/`stderr`, captures real exit codes, and detaches to background if execution exceeds `WaitMsBeforeAsync`.
+- **`remote_manage_task`**: Manage long-running background tasks (`list`, `status`, `kill`, `send_input` to write to stdin).
 
-### 2. File Manipulation (SFTP-Powered)
-- **`remote_view_file`**: Read remote files with line numbers, custom range (`StartLine` to `EndLine`), and token-safe byte caps.
-- **`remote_replace_file_content`**: Atomically search and replace a chunk of text in a remote file without rewriting the entire file.
-- **`remote_write_file`**: Write or overwrite remote files directly with automatic recursive directory creation (`mkdir -p`).
-- **`remote_list_dir`**: Browse remote directories with file sizes, permissions, and modification timestamps.
+### 3. Surgical File Operations (SFTP)
+- **`remote_view_file`**: Token-safe line-sliced reading (`StartLine`, `EndLine`, `MaxBytes`) with line numbering and truncation detection.
+- **`remote_replace_file_content`**: Exact chunk search-and-replace with atomic swapping (no corrupted files on partial failure).
+- **`remote_write_file`**: Binary-safe file creation or overwrite with automatic recursive parent directory creation (`mkdir -p`).
+- **`remote_list_dir`**: Fast SFTP directory inspection with exact file sizes, POSIX permissions, and modification dates.
 
-### 3. Fast Code Search
-- **`remote_grep_search`**: Search for code patterns or regular expressions. Automatically uses `ripgrep` (`rg`) if installed on the remote machine, with fallback to `grep -rn`.
-- **`remote_find_by_name`**: Find files matching glob patterns or names. Automatically uses `fd` if available, with fallback to `find`.
+### 4. Fast Code Search
+- **`remote_grep_search`**: Fast regex search across files. Automatically uses remote `rg` (ripgrep) if available, with graceful fallback to POSIX `grep -rn`.
+- **`remote_find_by_name`**: Fast file/directory search. Automatically uses remote `fd` if available, with graceful fallback to `find`.
 
 ---
 
-## 📦 Installation & Quick Start
+## 📦 Installation & Usage
 
-### Option 1: Run with Nix (Zero-Install)
+### 1. Zero-Install via Nix (Recommended)
 
-You can run `mcp-ssh-workspace` directly without installing any Go toolchain:
+Run directly without installing any Go toolchain:
 
 ```bash
-# Connect using host defined in ~/.ssh/config
-nix run github:surtr85/mcp-ssh-workspace -- --host myserver
+# Connect to a host configured in ~/.ssh/config
+nix run github:surtr85/mcp-ssh-workspace -- --host my-vps
 
-# Or specify user, host, and private key
-nix run github:surtr85/mcp-ssh-workspace -- --host 192.168.1.100 --user ubuntu --key ~/.ssh/id_ed25519
+# Or specify connection parameters directly
+nix run github:surtr85/mcp-ssh-workspace -- --host 192.168.1.50 --user ubuntu --key ~/.ssh/id_ed25519
+
+# Or launch in dynamic mode (agent connects using remote_connect tool)
+nix run github:surtr85/mcp-ssh-workspace
 ```
 
-### Option 2: Build from Source
+### 2. Build with Go
 
 ```bash
 git clone https://github.com/surtr85/mcp-ssh-workspace.git
 cd mcp-ssh-workspace
 go build -o mcp-ssh-workspace ./cmd/mcp-ssh-workspace
+./mcp-ssh-workspace --help
 ```
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ CLI Flags & Environment Variables
 
-### CLI Flags
-
-| Flag | Env Variable | Default | Description |
+| Flag | Environment Variable | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--host`, `-H` | `SSH_HOST` | *(Required)* | Remote host IP, domain, or `~/.ssh/config` alias |
+| `--host`, `-H` | `SSH_HOST` | `""` | Remote SSH host, IP address, or `~/.ssh/config` alias *(optional on boot)* |
 | `--user`, `-u` | `SSH_USER` | Current `$USER` | Remote SSH user |
-| `--port`, `-p` | `SSH_PORT` | `22` | Remote SSH port |
-| `--key`, `-i` | `SSH_KEY` | Auto-detected | Path to private SSH key (`~/.ssh/id_ed25519`, etc.) |
-| `--password` | `SSH_PASSWORD` | - | SSH password (if not using key) |
+| `--port`, `-p` | `SSH_PORT` | `22` | Remote SSH port (or auto-resolved from ssh config) |
+| `--key`, `-i` | `SSH_KEY` | Auto-detected | Path to private key file (`~/.ssh/id_ed25519`, etc.) |
+| `--password` | `SSH_PASSWORD` | `""` | SSH password (if not using key authentication) |
 | `--workdir`, `-w`| `SSH_WORKDIR` | Remote Home | Initial remote working directory |
-| `--agent` | - | `true` | Use SSH agent (`$SSH_AUTH_SOCK`) if available |
+| `--agent` | - | `true` | Use local SSH agent (`$SSH_AUTH_SOCK`) |
 
-> 💡 **Tip:** If you have hosts configured in `~/.ssh/config` (including aliases, identity files, and ports), `mcp-ssh-workspace` will automatically read and apply them!
+> 💡 **Tip:** If `--host` is omitted, the server launches in **Dynamic Mode**, exposing all tools and allowing the AI agent to call `remote_connect` when needed.
 
 ---
 
-## 🤖 Client Setup
+## 🤖 MCP Client Configurations
 
 ### Claude Desktop
-Add to your `claude_desktop_config.json`:
+Add to `~/.config/Claude/claude_desktop_config.json` (Linux) or `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 
 ```json
 {
   "mcpServers": {
-    "remote-server": {
-      "command": "mcp-ssh-workspace",
-      "args": [
-        "--host", "my-server-alias",
-        "--workdir", "/var/www/my-project"
-      ]
-    }
-  }
-}
-```
-
-Or using `nix run`:
-```json
-{
-  "mcpServers": {
-    "remote-server": {
+    "ssh-workspace": {
       "command": "nix",
-      "args": [
-        "run",
-        "github:surtr85/mcp-ssh-workspace",
-        "--",
-        "--host", "my-server-alias"
-      ]
+      "args": ["run", "github:surtr85/mcp-ssh-workspace", "--", "--host", "my-server-alias"]
     }
   }
 }
 ```
 
-### Antigravity / Cursor
-In your `mcp.json`:
+### Google Antigravity / Cursor / Cline / Zed
+Add to `~/.gemini/config/mcp_config.json` or your client's MCP configuration:
+
 ```json
 {
   "mcpServers": {
-    "remote-workspace": {
-      "command": "/path/to/mcp-ssh-workspace",
-      "args": ["--host", "prod-server", "--user", "deploy"]
+    "ssh-workspace": {
+      "command": "mcp-ssh-workspace",
+      "args": ["--host", "prod-server", "--workdir", "/var/www/app"]
     }
   }
 }
@@ -140,11 +153,39 @@ In your `mcp.json`:
 
 ---
 
-## 🔒 Security Best Practices
+## ❄️ Declarative NixOS / Home-Manager Integration
 
-- Use **SSH Key Authentication** or SSH Agent forwarding rather than hardcoding passwords.
-- It is recommended to connect with an unprivileged remote user account for agent operations.
-- The server validates paths and uses atomic SFTP file writes to prevent corrupted files.
+You can integrate `mcp-ssh-workspace` directly into your declarative NixOS configuration:
+
+```nix
+# In your flake inputs:
+inputs = {
+  nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+  mcp-ssh-workspace = {
+    url = "github:surtr85/mcp-ssh-workspace";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+};
+
+# In your Home-Manager MCP module:
+home.packages = [ inputs.mcp-ssh-workspace.packages.${pkgs.system}.default ];
+
+home.file.".gemini/config/mcp_config.json".text = builtins.toJSON {
+  mcpServers = {
+    ssh-workspace = {
+      command = "${inputs.mcp-ssh-workspace.packages.${pkgs.system}.default}/bin/mcp-ssh-workspace";
+    };
+  };
+};
+```
+
+---
+
+## 🔒 Security & Sandboxing
+
+- **Encrypted & Key-First:** Prioritizes SSH keys and local SSH Agent forwarding. No passwords need to be written to disk.
+- **Atomic File Swapping:** All write and replace operations use temporary staging files and atomic SFTP rename operations to prevent corrupted or truncated files.
+- **Token Protection:** All directory listings, file views, and grep outputs have strict pagination and byte capping to prevent blowing LLM context budgets.
 
 ---
 

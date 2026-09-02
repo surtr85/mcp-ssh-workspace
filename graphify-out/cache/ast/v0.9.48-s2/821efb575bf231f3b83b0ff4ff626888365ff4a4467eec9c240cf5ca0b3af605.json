@@ -1,1 +1,0 @@
-{"nodes": [{"id": "$graphify-root$_vendor_golang_org_x_text_internal_language_compact_tags_go", "label": "tags.go", "file_type": "code", "source_file": "vendor/golang.org/x/text/internal/language/compact/tags.go", "source_location": "L1"}], "edges": [], "raw_calls": [], "go_imports": {}}

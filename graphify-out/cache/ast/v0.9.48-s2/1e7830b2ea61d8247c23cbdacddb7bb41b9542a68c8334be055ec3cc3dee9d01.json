@@ -1,1 +1,0 @@
-{"nodes": [{"id": "$graphify-root$_vendor_golang_org_x_text_feature_plural_tables_go", "label": "tables.go", "file_type": "code", "source_file": "vendor/golang.org/x/text/feature/plural/tables.go", "source_location": "L1"}], "edges": [], "raw_calls": [], "go_imports": {}}

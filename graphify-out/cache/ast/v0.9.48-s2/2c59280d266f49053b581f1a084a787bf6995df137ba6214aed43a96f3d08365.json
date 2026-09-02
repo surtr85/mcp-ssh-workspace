@@ -1,1 +1,0 @@
-{"nodes": [{"id": "$graphify-root$_vendor_github_com_pkg_sftp_internal_encoding_ssh_filexfer_openssh_openssh_go", "label": "openssh.go", "file_type": "code", "source_file": "vendor/github.com/pkg/sftp/internal/encoding/ssh/filexfer/openssh/openssh.go", "source_location": "L1"}], "edges": [], "raw_calls": [], "go_imports": {}}
