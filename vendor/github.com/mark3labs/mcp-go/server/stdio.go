@@ -606,6 +606,16 @@ func (s *StdioServer) processMessage(
 		}
 	}
 
+	if json.Unmarshal(rawMessage, &baseMessage) == nil && baseMessage.Method == string(mcp.MethodSubscriptionsListen) {
+		go func() {
+			response := s.server.HandleMessage(ctx, rawMessage)
+			if response != nil {
+				_ = s.writeResponse(response, writer)
+			}
+		}()
+		return nil
+	}
+
 	// Handle other messages synchronously
 	response := s.server.HandleMessage(ctx, rawMessage)
 
