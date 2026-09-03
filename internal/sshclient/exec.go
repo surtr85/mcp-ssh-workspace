@@ -1,7 +1,6 @@
 package sshclient
 
 import (
-	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +15,25 @@ type ExecResult struct {
 	Cwd      string `json:"cwd"`
 	IsAsync  bool   `json:"is_async,omitempty"`
 	TaskID   string `json:"task_id,omitempty"`
+}
+
+// WrapCommand prepares a shell command to execute inside a POSIX subshell (/bin/sh or sh)
+// safely from ANY remote login shell (including fish, zsh, csh, bash).
+// It captures the exit code and persistent CWD cleanly without evaluating variables in the login shell.
+func WrapCommand(cmd, activeCwd string) (fullShellCmd, markerExit, markerCwd string) {
+	markerExit = "__MCP_EXIT__"
+	markerCwd = "__MCP_CWD__"
+
+	wrappedCmd := fmt.Sprintf(
+		"cd %q 2>/dev/null || cd / ; %s\n__EC__=$?\necho -n \"%s:$__EC__:%s:\" && pwd",
+		activeCwd,
+		cmd,
+		markerExit,
+		markerCwd,
+	)
+	escapedCmd := strings.ReplaceAll(wrappedCmd, "'", `'\''`)
+	fullShellCmd = fmt.Sprintf("exec sh -c '%s'", escapedCmd)
+	return fullShellCmd, markerExit, markerCwd
 }
 
 func (c *Client) RunCommand(cmd string, targetCwd string, isDaemon bool, waitMs int) (*ExecResult, error) {
@@ -49,20 +67,7 @@ func (c *Client) RunCommand(cmd string, targetCwd string, isDaemon bool, waitMs 
 	sess.Stdout = stdoutBuf
 	sess.Stderr = stderrBuf
 
-	// Wrap command to execute in the right cwd and report back the final cwd & exit code cleanly
-	// Use bash if available, fallback to sh
-	markerExit := "__MCP_EXIT__"
-	markerCwd := "__MCP_CWD__"
-
-	wrappedCmd := fmt.Sprintf(
-		"cd %q 2>/dev/null || cd / ; %s\n__EC__=$?\necho -n \"%s:$__EC__:%s:\" && pwd",
-		activeCwd,
-		cmd,
-		markerExit,
-		markerCwd,
-	)
-	encodedCmd := base64.StdEncoding.EncodeToString([]byte(wrappedCmd))
-	fullShellCmd := fmt.Sprintf("sh -c \"$(echo %s | base64 -d)\"", encodedCmd)
+	fullShellCmd, markerExit, markerCwd := WrapCommand(cmd, activeCwd)
 
 	if isDaemon {
 		// Start immediately in background

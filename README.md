@@ -44,7 +44,7 @@ Existing SSH MCP implementations treat remote machines like dumb `ssh exec` targ
 | **File Editing** | ❌ Fragile `sed` / `echo` scripts that mangle escapes, quotes, and indentation. | ✅ **Surgical Replacement:** Atomic chunk find-and-replace over binary SFTP. |
 | **Long-Running Daemons** | ❌ Blocks and times out on dev servers (`npm run dev`, `cargo watch`). | ✅ **Async Task Supervisor:** Detaches into tracked background tasks (`status`, `kill`, `stdin`). |
 | **Remote Host Setup** | ❌ Requires Python, Node.js runtime, or server-side agent daemons. | ✅ **Zero Footprint:** Requires only standard OpenSSH and SFTP on the remote host. |
-| **Shell Compatibility** | ❌ Assumes standard bash; crashes if user's remote shell is `fish` or `csh`. | ✅ **Universal Shell Engine:** Base64-piped execution immune to remote login shell syntax. |
+| **Shell Compatibility** | ❌ Assumes standard bash; crashes if user's remote shell is `fish` or `csh`. | ✅ **Universal Shell Engine:** Literal subshell runner (`exec /bin/sh -c '...'`) immune to remote login shell syntax (`fish`, `zsh`, `csh`, `bash`). |
 | **Host Connectivity** | ❌ Hardcoded host at boot; crashes if server is offline or unreachable. | ✅ **Dual Mode:** Static host via flags **OR** dynamic `remote_connect` in-flight. |
 
 ---
@@ -110,7 +110,8 @@ To validate production readiness under extreme conditions, `mcp-ssh-workspace` w
 1. **Sub-30ms WAN Latency:** A single multiplexed SSH channel eliminates the 1000ms TCP+crypto handshake penalty on every tool call. AI agent commands run at **34+ ops/sec over the internet**, feeling identical to local tools.
 2. **Zero-Loss Surgical Precision:** Even when code chunks contain dangerous shell metacharacters (`$(rm -rf /)`, backticks, `${VAR:-default}`, regex delimiters, and Persian/Unicode characters), the atomic SFTP pipeline preserves files byte-for-byte without escaping bugs.
 3. **True Background Daemons:** Background tasks (`isDaemon: true`) detach in **17ms**, run independently, accept live interactive `stdin` input in **0.23ms**, and terminate cleanly on command.
-4. **Universal Shell Agnostic:** Works flawlessly even when the remote user's default login shell is non-POSIX (like `fish` on Void Linux), thanks to subshell-isolated Base64 execution.
+4. **Universal Shell Agnostic:** Works flawlessly even when the remote user's default login shell is non-POSIX (like `fish` on Void Linux), thanks to literal subshell execution (`exec /bin/sh -c '...'`) preserving pure POSIX environment without escaping issues or remote dependencies.
+5. **Universal Parameter Flexibility:** Fully compliant with standard MCP `camelCase` parameters, while dynamically accepting `PascalCase` and `snake_case` aliases for maximum agent interoperability.
 
 ---
 
@@ -136,7 +137,7 @@ flowchart TD
         
         subgraph Channels["Multiplexed Subsystems"]
             SFTP["📁 SFTP Subsystem<br/>• Atomic file writes<br/>• Chunk replacements<br/>• Sliced reads<br/>• Fast directory listings"]
-            Exec["🐚 Universal Shell Engine<br/>• Base64-piped runner<br/>• Stateful CWD tracking<br/>• Agnostic to fish/zsh/bash"]
+            Exec["🐚 Universal Shell Engine<br/>• Subshell POSIX runner<br/>• Stateful CWD tracking<br/>• Agnostic to fish/zsh/bash"]
             Supervisor["⚙️ Process Supervisor<br/>• Background Daemons<br/>• PID Tracking<br/>• Stdin interactive pipe"]
         end
     end
