@@ -17,7 +17,7 @@
 
 ---
 
-[Key Features](#-why-mcp-ssh-workspace) • [Benchmarks](#-real-world-benchmarks) • [Architecture](#-architecture) • [The 11 Tools](#-the-11-agent-primitives) • [Quickstart](#-quickstart--installation) • [Client Setup](#-mcp-client-configurations) • [NixOS Integration](#-declarative-nixos--home-manager)
+[Key Features](#-why-mcp-ssh-workspace) • [Benchmarks](#-real-world-benchmarks) • [Architecture](#-architecture) • [The 14 Tools](#-the-14-agent-primitives) • [Tool Reference](#-detailed-tool-reference--examples) • [Quickstart](#-quickstart--installation) • [Client Setup](#-mcp-client-configurations) • [NixOS Integration](#-declarative-nixos--home-manager)
 
 ---
 
@@ -31,6 +31,8 @@ Existing SSH MCP implementations treat remote machines like dumb `ssh exec` targ
 - Edits rely on fragile bash `sed` or `cat << EOF` scripts that **corrupt files on quotes and escapes**.
 - Remote login shells like `fish` or `zsh` break naive bash command assumptions.
 - Background daemons and web servers **hang the agent indefinitely**.
+- Inspecting long builds requires dumping thousands of lines of terminal spam.
+- No way to preview remote web servers locally without manual SSH command line gymnastics.
 
 **`mcp-ssh-workspace` was engineered from scratch in Go to eradicate every single one of these failure modes.**
 
@@ -40,12 +42,16 @@ Existing SSH MCP implementations treat remote machines like dumb `ssh exec` targ
 | :--- | :--- | :--- |
 | **Shell State (`cwd` & env)** | ❌ **Stateless:** Every call opens a new session. `cd /app` is immediately lost. | ✅ **Persistent Session:** Tracks `cwd` and maintains directory context seamlessly across calls. |
 | **Network Overhead** | ❌ Re-authenticates & renegotiates SSH crypto on *every single* tool call (~1000ms). | ✅ **Multiplexed Pool:** Single long-lived SSH/SFTP connection (**<30ms** tool round-trip). |
-| **File Reading** | ❌ Dumps entire files with `cat` (overflows model context tokens). | ✅ **Token-Capped Slicing:** Exact `StartLine`/`EndLine` ranges, line numbering, and byte caps. |
+| **File Reading** | ❌ Dumps entire files with `cat` (overflows model context tokens). | ✅ **Token-Capped Slicing:** Exact `startLine`/`endLine` ranges, line numbering, and byte caps. |
 | **File Editing** | ❌ Fragile `sed` / `echo` scripts that mangle escapes, quotes, and indentation. | ✅ **Surgical Replacement:** Atomic chunk find-and-replace over binary SFTP. |
+| **File Synchronization** | ❌ No streaming sync; requires manual Base64 decoding or ad-hoc `scp`. | ✅ **Streaming SFTP Sync:** High-speed `remote_upload_file` and `remote_download_file` with bit-for-bit integrity. |
 | **Long-Running Daemons** | ❌ Blocks and times out on dev servers (`npm run dev`, `cargo watch`). | ✅ **Async Task Supervisor:** Detaches into tracked background tasks (`status`, `kill`, `stdin`). |
+| **Live Build Monitoring** | ❌ Dumps all historical output or hangs waiting for completion. | ✅ **Smart Log Tail:** `remote_manage_task (tail)` streams only the last $N$ lines, saving token budget. |
+| **Web & API Forwarding** | ❌ Cannot view or test remote web servers from local machine. | ✅ **Dynamic Port Forwarding:** `remote_tunnel` binds `127.0.0.1:<port>` for browser & Playwright testing. |
 | **Remote Host Setup** | ❌ Requires Python, Node.js runtime, or server-side agent daemons. | ✅ **Zero Footprint:** Requires only standard OpenSSH and SFTP on the remote host. |
 | **Shell Compatibility** | ❌ Assumes standard bash; crashes if user's remote shell is `fish` or `csh`. | ✅ **Universal Shell Engine:** Literal subshell runner (`exec /bin/sh -c '...'`) immune to remote login shell syntax (`fish`, `zsh`, `csh`, `bash`). |
 | **Host Connectivity** | ❌ Hardcoded host at boot; crashes if server is offline or unreachable. | ✅ **Dual Mode:** Static host via flags **OR** dynamic `remote_connect` in-flight. |
+| **Parameter Interop** | ❌ Strictly PascalCase or camelCase; breaks different agent conventions. | ✅ **Multi-Alias Resolver:** Dynamically accepts `camelCase`, `PascalCase`, and short aliases. |
 
 ---
 
@@ -120,12 +126,16 @@ To validate production readiness under extreme conditions, `mcp-ssh-workspace` w
 ```mermaid
 flowchart TD
     subgraph ClientLayer["🖥️ Local Host / Agent Environment"]
-        Agent["🤖 AI Coding Assistant<br/>(Claude / Antigravity / Cursor / Cline / Zed)"]
+        Agent["🤖 AI Coding Assistant<br/>(Claude • Pi • Antigravity • Cursor • Cline • Zed)"]
+        Browser["🌐 Local Browser / Playwright<br/>(http://127.0.0.1:localPort)"]
         Config["🔑 Local SSH Assets<br/>(~/.ssh/config • ~/.ssh/id_* • SSH-Agent)"]
         Server["⚡ mcp-ssh-workspace<br/>(Lightweight Go Daemon)"]
+        TunnelMgr["🔀 Tunnel Manager<br/>(Local TCP Listener)"]
 
         Agent <== "MCP JSON-RPC Protocol (stdio)" ==> Server
         Config -. "Auto-resolves aliases & keys" .-> Server
+        Browser -. "Direct Web Preview" .-> TunnelMgr
+        Server --> TunnelMgr
     end
 
     subgraph Multiplex["🔒 Encrypted SSH Tunnel (Single Persistent TCP Socket)"]
@@ -136,17 +146,20 @@ flowchart TD
         SSHD["OpenSSH Daemon (:22)"]
         
         subgraph Channels["Multiplexed Subsystems"]
-            SFTP["📁 SFTP Subsystem<br/>• Atomic file writes<br/>• Chunk replacements<br/>• Sliced reads<br/>• Fast directory listings"]
+            SFTP["📁 SFTP Subsystem<br/>• Atomic file writes & chunk replace<br/>• Sliced reads & directory listings<br/>• Streaming Upload/Download sync"]
             Exec["🐚 Universal Shell Engine<br/>• Subshell POSIX runner<br/>• Stateful CWD tracking<br/>• Agnostic to fish/zsh/bash"]
-            Supervisor["⚙️ Process Supervisor<br/>• Background Daemons<br/>• PID Tracking<br/>• Stdin interactive pipe"]
+            Supervisor["⚙️ Process Supervisor<br/>• Background Daemons & dev servers<br/>• Stdin pipe & Tail output"]
+            PortForward["🔌 Remote Port Target<br/>(:3000 Vite / :8000 API / :5432 DB)"]
         end
     end
 
     Server <== "Connection Pool" ==> Tunnel
+    TunnelMgr <== "Port Forwarding Stream" ==> Tunnel
     Tunnel <== "Subsystem multiplexing" ==> SSHD
     SSHD --> SFTP
     SSHD --> Exec
     SSHD --> Supervisor
+    SSHD --> PortForward
 ```
 
 ---
@@ -180,6 +193,90 @@ flowchart TD
 ### 5. Dynamic Port Forwarding & Networking
 - **`remote_tunnel`**: Establish local-to-remote SSH port forwarding tunnels (`action: "open" | "close" | "list"`).
   - Open a remote web app, API, or database directly to `http://127.0.0.1:<port>` for browser inspection, Playwright testing, or local curl!
+
+---
+
+## 📖 Detailed Tool Reference & Examples
+
+### 🌐 Port Forwarding: `remote_tunnel`
+Forward remote services (e.g. Next.js, Vite, FastAPI, PostgreSQL) directly to your local machine:
+
+```json
+// 1. Open tunnel to remote Vite dev server running on port 5173
+{
+  "name": "remote_tunnel",
+  "arguments": {
+    "action": "open",
+    "remotePort": 5173,
+    "localPort": 0 // 0 = automatically bind an available local port
+  }
+}
+// Response:
+// {
+//   "access_url": "http://127.0.0.1:42189",
+//   "message": "Tunnel established: 127.0.0.1:42189 -> 127.0.0.1:5173",
+//   "tunnel": { "id": "tun-1", "local_port": 42189, "remote_port": 5173 }
+// }
+
+// 2. List active tunnels
+{ "name": "remote_tunnel", "arguments": { "action": "list" } }
+
+// 3. Close tunnel when done
+{ "name": "remote_tunnel", "arguments": { "action": "close", "tunnelId": "tun-1" } }
+```
+
+### 📦 Streaming File Sync: `remote_upload_file` & `remote_download_file`
+Transfer files bidirectionally with automatic parent directory creation (`mkdir -p`):
+
+```json
+// Upload local configuration or build artifact to remote
+{
+  "name": "remote_upload_file",
+  "arguments": {
+    "localPath": "/home/user/app/config.json",
+    "remotePath": "/var/www/app/config.json",
+    "overwrite": true
+  }
+}
+
+// Download remote database dump or generated logs to local
+{
+  "name": "remote_download_file",
+  "arguments": {
+    "remotePath": "/var/log/nginx/access.log",
+    "localPath": "/tmp/nginx_access.log"
+  }
+}
+```
+
+### 📜 Smart Log Tail: `remote_manage_task (tail)`
+Prevent context window exhaustion by streaming only the latest $N$ lines of background builds:
+
+```json
+{
+  "name": "remote_manage_task",
+  "arguments": {
+    "action": "tail",
+    "taskId": "task-1",
+    "lines": 30
+  }
+}
+// Returns only the last 30 lines of stdout and stderr while task is running!
+```
+
+### 🔬 Surgical Atomic Edits: `remote_replace_file_content`
+Replace exact code blocks without corrupting indentation, quotes, or unicode characters:
+
+```json
+{
+  "name": "remote_replace_file_content",
+  "arguments": {
+    "targetFile": "/var/www/app/server.py",
+    "targetContent": "DEBUG = True\nPORT = 8000",
+    "replacementContent": "DEBUG = False\nPORT = 8080"
+  }
+}
+```
 
 ---
 
@@ -255,6 +352,19 @@ Add to `~/.config/Claude/claude_desktop_config.json` (Linux) or `~/Library/Appli
 
 ### Google Antigravity
 Add to `~/.gemini/config/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ssh-workspace": {
+      "command": "mcp-ssh-workspace"
+    }
+  }
+}
+```
+
+### Pi Agent
+Add to `~/.pi/agent/mcp.json`:
 
 ```json
 {
