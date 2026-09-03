@@ -490,7 +490,14 @@ func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
 		} else if fileType == "directory" {
 			cmd.WriteString(" -t d")
 		}
-		cmd.WriteString(fmt.Sprintf(" %q %q", pattern, searchDir))
+		cmd.WriteString(fmt.Sprintf(" %q %q 2>/dev/null", pattern, searchDir))
+
+		findClause := fmt.Sprintf("-name %q", pattern)
+		if !strings.ContainsAny(pattern, "*?[") {
+			findClause = fmt.Sprintf("\\( -name %q -o -name \"*%s*\" \\)", pattern, pattern)
+		} else if strings.HasPrefix(pattern, "*.") {
+			findClause = fmt.Sprintf("\\( -name %q -o -name \"*%s\" \\)", pattern, strings.TrimPrefix(pattern, "*."))
+		}
 
 		cmd.WriteString(fmt.Sprintf("; else find %q", searchDir))
 		if maxDepth > 0 {
@@ -501,7 +508,7 @@ func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
 		} else if fileType == "directory" {
 			cmd.WriteString(" -type d")
 		}
-		cmd.WriteString(fmt.Sprintf(" -name %q", pattern))
+		cmd.WriteString(fmt.Sprintf(" %s 2>/dev/null", findClause))
 		cmd.WriteString("; fi | head -n 100")
 
 		res, err := client.RunCommand(cmd.String(), client.GetCwd(), false, 10000)
