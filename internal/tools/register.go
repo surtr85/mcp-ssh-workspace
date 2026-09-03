@@ -411,7 +411,7 @@ func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
 
 		// Build fast shell command that checks for rg first
 		var cmd strings.Builder
-		cmd.WriteString("if command -v rg >/dev/null 2>&1; then rg --max-columns 500 -n")
+		cmd.WriteString("if command -v rg >/dev/null 2>&1; then rg --hidden --max-columns 500 -n")
 		if caseInsensitive {
 			cmd.WriteString(" -i")
 		}
@@ -441,7 +441,15 @@ func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
 			return mcp.NewToolResultError(fmt.Sprintf("Search error: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(res.Stdout), nil
+		outText := strings.TrimSpace(res.Stdout)
+		if outText == "" {
+			if strings.TrimSpace(res.Stderr) != "" {
+				return mcp.NewToolResultError(fmt.Sprintf("Search completed with error: %s", strings.TrimSpace(res.Stderr))), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("No matches found for %q in %s", query, searchPath)), nil
+		}
+
+		return mcp.NewToolResultText(outText), nil
 	})
 
 	// 9. remote_find_by_name
@@ -473,7 +481,7 @@ func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
 		maxDepth := getParamInt(request, 0, "maxDepth", "MaxDepth", "max_depth")
 
 		var cmd strings.Builder
-		cmd.WriteString("if command -v fd >/dev/null 2>&1; then fd")
+		cmd.WriteString("if command -v fd >/dev/null 2>&1; then fd -H -I -g")
 		if maxDepth > 0 {
 			cmd.WriteString(fmt.Sprintf(" --max-depth %d", maxDepth))
 		}
@@ -484,7 +492,7 @@ func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
 		}
 		cmd.WriteString(fmt.Sprintf(" %q %q", pattern, searchDir))
 
-		cmd.WriteString("; else find %q")
+		cmd.WriteString(fmt.Sprintf("; else find %q", searchDir))
 		if maxDepth > 0 {
 			cmd.WriteString(fmt.Sprintf(" -maxdepth %d", maxDepth))
 		}
@@ -501,6 +509,14 @@ func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
 			return mcp.NewToolResultError(fmt.Sprintf("Find error: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(res.Stdout), nil
+		outText := strings.TrimSpace(res.Stdout)
+		if outText == "" {
+			if strings.TrimSpace(res.Stderr) != "" {
+				return mcp.NewToolResultError(fmt.Sprintf("Find completed with error: %s", strings.TrimSpace(res.Stderr))), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("No files or directories matching %q found in %s", pattern, searchDir)), nil
+		}
+
+		return mcp.NewToolResultText(outText), nil
 	})
 }
