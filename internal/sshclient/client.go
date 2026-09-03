@@ -17,18 +17,21 @@ type Client struct {
 	cfg        *config.Config
 	sshClient  *ssh.Client
 	sftpClient *sftp.Client
-	taskMgr    *TaskManager
-	tunnelMgr  *TunnelManager
-	mu         sync.Mutex
-	cwdMu      sync.RWMutex
-	currentCwd string
+	taskMgr      *TaskManager
+	tunnelMgr    *TunnelManager
+	mu           sync.Mutex
+	cwdMu        sync.RWMutex
+	currentCwd   string
+	sudoMu       sync.RWMutex
+	sudoPassword string
 }
 
 func NewClient(cfg *config.Config) *Client {
 	c := &Client{
-		cfg:        cfg,
-		taskMgr:    NewTaskManager(),
-		currentCwd: cfg.WorkDir,
+		cfg:          cfg,
+		taskMgr:      NewTaskManager(),
+		currentCwd:   cfg.WorkDir,
+		sudoPassword: cfg.SudoPassword,
 	}
 	c.tunnelMgr = NewTunnelManager(c.SSH)
 
@@ -41,22 +44,45 @@ func NewClient(cfg *config.Config) *Client {
 	return c
 }
 
+func (c *Client) SetSudoPassword(password string) {
+	c.sudoMu.Lock()
+	defer c.sudoMu.Unlock()
+	c.sudoPassword = password
+}
+
+func (c *Client) GetSudoPassword() string {
+	c.sudoMu.RLock()
+	defer c.sudoMu.RUnlock()
+	return c.sudoPassword
+}
+
+func (c *Client) HasSudoPassword() bool {
+	c.sudoMu.RLock()
+	defer c.sudoMu.RUnlock()
+	return c.sudoPassword != ""
+}
+
 func (c *Client) IsConnected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sshClient != nil && c.sftpClient != nil
 }
 
-func (c *Client) ConnectTo(host string, port int, user, keyPath, password string) error {
+func (c *Client) ConnectTo(host string, port int, user, keyPath, password, sudoPassword string) error {
 	c.Close()
 
+	if sudoPassword == "" && password != "" {
+		sudoPassword = password
+	}
+
 	newCfg := &config.Config{
-		Host:     host,
-		Port:     port,
-		User:     user,
-		KeyPath:  keyPath,
-		Password: password,
-		UseAgent: true,
+		Host:         host,
+		Port:         port,
+		User:         user,
+		KeyPath:      keyPath,
+		Password:     password,
+		SudoPassword: sudoPassword,
+		UseAgent:     true,
 	}
 	config.ResolveHostConfig(newCfg)
 
@@ -64,6 +90,8 @@ func (c *Client) ConnectTo(host string, port int, user, keyPath, password string
 	c.cfg = newCfg
 	c.currentCwd = newCfg.WorkDir
 	c.mu.Unlock()
+
+	c.SetSudoPassword(sudoPassword)
 
 	return c.Connect()
 }

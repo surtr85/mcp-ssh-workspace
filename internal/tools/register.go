@@ -72,6 +72,8 @@ func registerCommandTools(s *server.MCPServer, client *sshclient.Client) {
 		mcp.WithString("KeyPath", mcp.Description("Alias for keyPath.")),
 		mcp.WithString("password", mcp.Description("SSH password if not using key (alias: Password).")),
 		mcp.WithString("Password", mcp.Description("Alias for password.")),
+		mcp.WithString("sudoPassword", mcp.Description("Sudo password for privileged remote commands (alias: SudoPassword, sudo_password).")),
+		mcp.WithString("SudoPassword", mcp.Description("Alias for sudoPassword.")),
 	)
 
 	s.AddTool(connectTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -83,8 +85,9 @@ func registerCommandTools(s *server.MCPServer, client *sshclient.Client) {
 		user := getParamString(request, "user", "User")
 		keyPath := getParamString(request, "keyPath", "KeyPath", "key_path")
 		password := getParamString(request, "password", "Password")
+		sudoPassword := getParamString(request, "sudoPassword", "SudoPassword", "sudo_password")
 
-		if err := client.ConnectTo(host, port, user, keyPath, password); err != nil {
+		if err := client.ConnectTo(host, port, user, keyPath, password, sudoPassword); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to connect to %s: %v", host, err)), nil
 		}
 
@@ -101,14 +104,35 @@ func registerCommandTools(s *server.MCPServer, client *sshclient.Client) {
 		return mcp.NewToolResultText("Disconnected from remote SSH host."), nil
 	})
 
+	// 0.2 remote_set_sudo_password
+	setSudoTool := mcp.NewTool("remote_set_sudo_password",
+		mcp.WithDescription("Set or update the sudo password for privileged execution in the current remote session."),
+		mcp.WithString("sudoPassword", mcp.Description("The sudo password (Required, aliases: SudoPassword, sudo_password, password, Password).")),
+		mcp.WithString("SudoPassword", mcp.Description("Alias for sudoPassword.")),
+		mcp.WithString("password", mcp.Description("Alias for sudoPassword.")),
+	)
+
+	s.AddTool(setSudoTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		pw := getParamString(request, "sudoPassword", "SudoPassword", "sudo_password", "password", "Password")
+		if pw == "" {
+			return mcp.NewToolResultError("sudoPassword is required"), nil
+		}
+		client.SetSudoPassword(pw)
+		return mcp.NewToolResultText("Sudo password successfully configured for remote session."), nil
+	})
+
 	// 1. remote_run_command
 	runCmdTool := mcp.NewTool("remote_run_command",
-		mcp.WithDescription("Execute a command on the remote host with persistent working directory (CWD) and optional background task management."),
+		mcp.WithDescription("Execute a command on the remote host with persistent working directory (CWD), automatic sudo handling, and optional background task management."),
 		mcp.WithString("commandLine", mcp.Description("The exact command line string to execute on the remote machine (Required, aliases: command, CommandLine).")),
 		mcp.WithString("CommandLine", mcp.Description("Alias for commandLine.")),
 		mcp.WithString("command", mcp.Description("Alias for commandLine.")),
 		mcp.WithString("cwd", mcp.Description("Optional remote working directory (alias: Cwd).")),
 		mcp.WithString("Cwd", mcp.Description("Alias for cwd.")),
+		mcp.WithBoolean("sudo", mcp.Description("Execute command with sudo privileges automatically (alias: Sudo, runAsSudo).")),
+		mcp.WithBoolean("Sudo", mcp.Description("Alias for sudo.")),
+		mcp.WithString("sudoPassword", mcp.Description("Optional sudo password override for this command (alias: SudoPassword, sudo_password).")),
+		mcp.WithString("SudoPassword", mcp.Description("Alias for sudoPassword.")),
 		mcp.WithBoolean("isDaemon", mcp.Description("Set to true for long-running support processes that should keep running in the background indefinitely (alias: IsDaemon).")),
 		mcp.WithBoolean("IsDaemon", mcp.Description("Alias for isDaemon.")),
 		mcp.WithInteger("waitMsBeforeAsync", mcp.Description("Milliseconds to wait for the command to finish before detaching to background (default 5000ms, alias: WaitMsBeforeAsync).")),
@@ -121,10 +145,15 @@ func registerCommandTools(s *server.MCPServer, client *sshclient.Client) {
 			return mcp.NewToolResultError("commandLine (or command / CommandLine) is required"), nil
 		}
 		cwd := getParamString(request, "cwd", "Cwd")
+		runAsSudo := getParamBool(request, false, "sudo", "Sudo", "runAsSudo", "run_as_sudo")
+		sudoPassword := getParamString(request, "sudoPassword", "SudoPassword", "sudo_password")
 		isDaemon := getParamBool(request, false, "isDaemon", "IsDaemon", "is_daemon", "daemon")
 		waitMs := getParamInt(request, 5000, "waitMsBeforeAsync", "WaitMsBeforeAsync", "wait_ms_before_async", "timeout")
 
-		res, err := client.RunCommand(cmd, cwd, isDaemon, waitMs)
+		res, err := client.RunCommand(cmd, cwd, isDaemon, waitMs, sshclient.CommandOptions{
+			SudoPassword: sudoPassword,
+			RunAsSudo:    runAsSudo,
+		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Execution error: %v", err)), nil
 		}
@@ -277,8 +306,9 @@ func registerCommandTools(s *server.MCPServer, client *sshclient.Client) {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to get session info: %v", err)), nil
 		}
 		info := map[string]any{
-			"current_cwd": client.GetCwd(),
-			"remote_info": strings.TrimSpace(res.Stdout),
+			"current_cwd":     client.GetCwd(),
+			"remote_info":     strings.TrimSpace(res.Stdout),
+			"sudo_configured": client.HasSudoPassword(),
 		}
 		out, _ := json.MarshalIndent(info, "", "  ")
 		return mcp.NewToolResultText(string(out)), nil

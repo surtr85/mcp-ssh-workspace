@@ -17,6 +17,7 @@ type Config struct {
 	User       string
 	KeyPath    string
 	Password   string
+	SudoPassword string
 	WorkDir    string
 	UseAgent   bool
 	KnownHosts string
@@ -30,6 +31,7 @@ func Parse() (*Config, error) {
 	flag.StringVar(&cfg.User, "user", os.Getenv("SSH_USER"), "Remote SSH user")
 	flag.StringVar(&cfg.KeyPath, "key", os.Getenv("SSH_KEY"), "Path to private key file (e.g. ~/.ssh/id_ed25519)")
 	flag.StringVar(&cfg.Password, "password", os.Getenv("SSH_PASSWORD"), "Password for SSH authentication")
+	flag.StringVar(&cfg.SudoPassword, "sudo-password", os.Getenv("SSH_SUDO_PASSWORD"), "Sudo password for privileged commands")
 	flag.StringVar(&cfg.WorkDir, "workdir", os.Getenv("SSH_WORKDIR"), "Default initial remote working directory")
 	flag.BoolVar(&cfg.UseAgent, "agent", true, "Use SSH agent ($SSH_AUTH_SOCK) if available")
 	flag.StringVar(&cfg.KnownHosts, "known-hosts", "", "Path to known_hosts file")

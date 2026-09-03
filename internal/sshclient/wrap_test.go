@@ -20,13 +20,20 @@ func TestShellWrappers(t *testing.T) {
 
 	for _, sh := range shells {
 		for _, cmd := range testCmds {
-			fullCmd, _, _ := WrapCommand(cmd, "/")
+			fullCmd, _, _ := WrapCommand(cmd, "/", "")
 
 			out, err := exec.Command(sh, "-c", fullCmd).CombinedOutput()
 			if err != nil {
 				t.Errorf("[%s] failed for cmd %q:\nErr: %v\nOutput: %s", sh, cmd, err, string(out))
 			} else {
 				t.Logf("[%s] succeeded for %q:\n%s", sh, cmd, string(out))
+			}
+
+			// Also test with sudoPassword configured
+			fullCmdSudo, _, _ := WrapCommand(cmd, "/", "test_password_123")
+			outSudo, errSudo := exec.Command(sh, "-c", fullCmdSudo).CombinedOutput()
+			if errSudo != nil {
+				t.Errorf("[%s] failed with sudo askpass for cmd %q:\nErr: %v\nOutput: %s", sh, cmd, errSudo, string(outSudo))
 			}
 		}
 	}

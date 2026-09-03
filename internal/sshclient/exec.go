@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -17,26 +18,50 @@ type ExecResult struct {
 	TaskID   string `json:"task_id,omitempty"`
 }
 
+type CommandOptions struct {
+	SudoPassword string
+	RunAsSudo    bool
+}
+
 // WrapCommand prepares a shell command to execute inside a POSIX subshell (/bin/sh or sh)
-// safely from ANY remote login shell (including fish, zsh, csh, bash).
-// It captures the exit code and persistent CWD cleanly without evaluating variables in the login shell.
-func WrapCommand(cmd, activeCwd string) (fullShellCmd, markerExit, markerCwd string) {
+// safely from ANY remote login shell (including fish, zsh, csh, tcsh, bash, ash, dash).
+// It encodes the command via Base64 to guarantee complete character/quote/variable safety across
+// all remote login shells.
+// If sudoPassword is provided, it automatically configures a secure SUDO_ASKPASS wrapper
+// so that any sudo invocation runs non-interactively without requiring a TTY or manual password prompts.
+func WrapCommand(cmd, activeCwd, sudoPassword string) (fullShellCmd, markerExit, markerCwd string) {
 	markerExit = "__MCP_EXIT__"
 	markerCwd = "__MCP_CWD__"
 
-	wrappedCmd := fmt.Sprintf(
-		"cd %q 2>/dev/null || cd / ; %s\n__EC__=$?\necho -n \"%s:$__EC__:%s:\" && pwd",
-		activeCwd,
-		cmd,
-		markerExit,
-		markerCwd,
-	)
-	escapedCmd := strings.ReplaceAll(wrappedCmd, "'", `'\''`)
-	fullShellCmd = fmt.Sprintf("exec sh -c '%s'", escapedCmd)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("cd %q 2>/dev/null || cd /\n", activeCwd))
+
+	if sudoPassword != "" {
+		// Non-interactive sudo askpass setup using /tmp or ~/.cache (avoiding /dev/shm which often has noexec)
+		sb.WriteString(`_AP=$(mktemp /tmp/.mcp_ap.XXXXXX 2>/dev/null || mktemp ~/.cache/.mcp_ap.XXXXXX 2>/dev/null || echo "/tmp/.mcp_ap_$$")` + "\n")
+		sb.WriteString(fmt.Sprintf("cat << 'EOF_MCP_AP' > \"$_AP\"\n#!/bin/sh\ncat << 'EOF_MCP_PW'\n%s\nEOF_MCP_PW\nEOF_MCP_AP\n", sudoPassword))
+		sb.WriteString("chmod 700 \"$_AP\" 2>/dev/null\n")
+		sb.WriteString("export SUDO_ASKPASS=\"$_AP\"\n")
+		sb.WriteString("sudo() { command sudo -A \"$@\"; }\n")
+		sb.WriteString("trap 'rm -f \"$_AP\" 2>/dev/null' EXIT INT TERM HUP\n")
+	}
+
+	sb.WriteString(cmd)
+	sb.WriteString("\n__EC__=$?\n")
+	sb.WriteString(fmt.Sprintf("echo -n \"%s:$__EC__:%s:\" && pwd", markerExit, markerCwd))
+
+	rawScript := sb.String()
+	b64Script := base64.StdEncoding.EncodeToString([]byte(rawScript))
+
+	// By executing via base64 pipeline into POSIX sh:
+	// 1. Completely agnostic to ANY remote login shell (fish, zsh, csh, tcsh, bash, ash, dash, etc.)
+	// 2. No quotes, newlines, variables or syntax characters are evaluated by the remote login shell.
+	// 3. Both GNU base64 (-d) and BSD base64 (-D) are supported.
+	fullShellCmd = fmt.Sprintf("sh -c 'echo %s | (base64 -d 2>/dev/null || base64 -D) | sh'", b64Script)
 	return fullShellCmd, markerExit, markerCwd
 }
 
-func (c *Client) RunCommand(cmd string, targetCwd string, isDaemon bool, waitMs int) (*ExecResult, error) {
+func (c *Client) RunCommand(cmd string, targetCwd string, isDaemon bool, waitMs int, opts ...CommandOptions) (*ExecResult, error) {
 	if err := c.EnsureConnected(); err != nil {
 		return nil, err
 	}
@@ -44,6 +69,25 @@ func (c *Client) RunCommand(cmd string, targetCwd string, isDaemon bool, waitMs 
 	activeCwd := targetCwd
 	if activeCwd == "" {
 		activeCwd = c.GetCwd()
+	}
+
+	var opt CommandOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
+	if opt.RunAsSudo {
+		trimmed := strings.TrimSpace(cmd)
+		if !strings.HasPrefix(trimmed, "sudo") {
+			cmd = "sudo " + cmd
+		}
+	}
+
+	sudoPass := opt.SudoPassword
+	if sudoPass != "" {
+		c.SetSudoPassword(sudoPass)
+	} else {
+		sudoPass = c.GetSudoPassword()
 	}
 
 	sshCli, err := c.SSH()
@@ -67,7 +111,7 @@ func (c *Client) RunCommand(cmd string, targetCwd string, isDaemon bool, waitMs 
 	sess.Stdout = stdoutBuf
 	sess.Stderr = stderrBuf
 
-	fullShellCmd, markerExit, markerCwd := WrapCommand(cmd, activeCwd)
+	fullShellCmd, markerExit, markerCwd := WrapCommand(cmd, activeCwd, sudoPass)
 
 	if isDaemon {
 		// Start immediately in background
