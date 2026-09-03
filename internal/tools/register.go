@@ -16,6 +16,7 @@ func RegisterTools(s *server.MCPServer, client *sshclient.Client) {
 	registerCommandTools(s, client)
 	registerFileTools(s, client)
 	registerSearchTools(s, client)
+	registerTunnelTools(s, client)
 }
 
 func getParamString(req mcp.CallToolRequest, keys ...string) string {
@@ -134,11 +135,13 @@ func registerCommandTools(s *server.MCPServer, client *sshclient.Client) {
 
 	// 2. remote_manage_task
 	manageTaskTool := mcp.NewTool("remote_manage_task",
-		mcp.WithDescription("Manage background tasks running on the remote host (list, status, kill, send_input)."),
-		mcp.WithString("action", mcp.Description("The action to perform: 'list', 'status', 'kill', or 'send_input' (Required, alias: Action).")),
+		mcp.WithDescription("Manage background tasks running on the remote host (list, status, tail, kill, send_input)."),
+		mcp.WithString("action", mcp.Description("The action to perform: 'list', 'status', 'tail', 'kill', or 'send_input' (Required, alias: Action).")),
 		mcp.WithString("Action", mcp.Description("Alias for action.")),
-		mcp.WithString("taskId", mcp.Description("Task ID (e.g. 'task-1'). Required for 'status', 'kill', and 'send_input' (alias: TaskId).")),
+		mcp.WithString("taskId", mcp.Description("Task ID (e.g. 'task-1'). Required for 'status', 'tail', 'kill', and 'send_input' (alias: TaskId).")),
 		mcp.WithString("TaskId", mcp.Description("Alias for taskId.")),
+		mcp.WithInteger("lines", mcp.Description("Number of output lines to return for 'tail' action (default 50, alias: Lines).")),
+		mcp.WithInteger("Lines", mcp.Description("Alias for lines.")),
 		mcp.WithString("input", mcp.Description("Input string to send to stdin of the task. Required when action is 'send_input' (alias: Input).")),
 		mcp.WithString("Input", mcp.Description("Alias for input.")),
 	)
@@ -199,6 +202,32 @@ func registerCommandTools(s *server.MCPServer, client *sshclient.Client) {
 				"exit_code":  t.ExitCode,
 				"stdout":     t.Stdout.String(),
 				"stderr":     t.Stderr.String(),
+			}
+			out, _ := json.MarshalIndent(res, "", "  ")
+			return mcp.NewToolResultText(string(out)), nil
+
+		case "tail":
+			if taskID == "" {
+				return mcp.NewToolResultError("taskId is required for 'tail' action"), nil
+			}
+			t, ok := tm.Get(taskID)
+			if !ok {
+				return mcp.NewToolResultError(fmt.Sprintf("Task %s not found", taskID)), nil
+			}
+			lines := getParamInt(request, 50, "lines", "Lines", "n")
+			stdoutTail, stderrTail := t.Tail(lines)
+			status := "RUNNING"
+			if t.Completed.Load() {
+				status = "DONE"
+			}
+			res := map[string]any{
+				"id":          t.ID,
+				"command":     t.Command,
+				"cwd":         t.Cwd,
+				"status":      status,
+				"lines":       lines,
+				"stdout_tail": stdoutTail,
+				"stderr_tail": stderrTail,
 			}
 			out, _ := json.MarshalIndent(res, "", "  ")
 			return mcp.NewToolResultText(string(out)), nil
@@ -378,6 +407,66 @@ func registerFileTools(s *server.MCPServer, client *sshclient.Client) {
 		out, _ := json.MarshalIndent(entries, "", "  ")
 		return mcp.NewToolResultText(string(out)), nil
 	})
+
+	// 8. remote_upload_file
+	uploadTool := mcp.NewTool("remote_upload_file",
+		mcp.WithDescription("Upload a local file to the remote host via SFTP stream. Automatically creates parent directories."),
+		mcp.WithString("localPath", mcp.Description("Path to source file on local machine (Required, aliases: LocalPath, source).")),
+		mcp.WithString("LocalPath", mcp.Description("Alias for localPath.")),
+		mcp.WithString("remotePath", mcp.Description("Path to destination file on remote host (Required, aliases: RemotePath, destination).")),
+		mcp.WithString("RemotePath", mcp.Description("Alias for remotePath.")),
+		mcp.WithBoolean("overwrite", mcp.Description("Set to true to overwrite existing file (default true, alias: Overwrite).")),
+		mcp.WithBoolean("Overwrite", mcp.Description("Alias for overwrite.")),
+	)
+
+	s.AddTool(uploadTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		localPath := getParamString(request, "localPath", "LocalPath", "source")
+		if localPath == "" {
+			return mcp.NewToolResultError("localPath is required"), nil
+		}
+		remotePath := getParamString(request, "remotePath", "RemotePath", "destination")
+		if remotePath == "" {
+			return mcp.NewToolResultError("remotePath is required"), nil
+		}
+		overwrite := getParamBool(request, true, "overwrite", "Overwrite")
+
+		n, err := client.UploadFile(localPath, remotePath, overwrite)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Upload failed: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(fmt.Sprintf("Successfully uploaded %d bytes: %s -> %s", n, localPath, remotePath)), nil
+	})
+
+	// 9. remote_download_file
+	downloadTool := mcp.NewTool("remote_download_file",
+		mcp.WithDescription("Download a file from the remote host to the local machine via SFTP stream. Automatically creates local parent directories."),
+		mcp.WithString("remotePath", mcp.Description("Path to source file on remote host (Required, aliases: RemotePath, source).")),
+		mcp.WithString("RemotePath", mcp.Description("Alias for remotePath.")),
+		mcp.WithString("localPath", mcp.Description("Path to destination file on local machine (Required, aliases: LocalPath, destination).")),
+		mcp.WithString("LocalPath", mcp.Description("Alias for localPath.")),
+		mcp.WithBoolean("overwrite", mcp.Description("Set to true to overwrite existing file (default true, alias: Overwrite).")),
+		mcp.WithBoolean("Overwrite", mcp.Description("Alias for overwrite.")),
+	)
+
+	s.AddTool(downloadTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		remotePath := getParamString(request, "remotePath", "RemotePath", "source")
+		if remotePath == "" {
+			return mcp.NewToolResultError("remotePath is required"), nil
+		}
+		localPath := getParamString(request, "localPath", "LocalPath", "destination")
+		if localPath == "" {
+			return mcp.NewToolResultError("localPath is required"), nil
+		}
+		overwrite := getParamBool(request, true, "overwrite", "Overwrite")
+
+		n, err := client.DownloadFile(remotePath, localPath, overwrite)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Download failed: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(fmt.Sprintf("Successfully downloaded %d bytes: %s -> %s", n, remotePath, localPath)), nil
+	})
 }
 
 func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
@@ -525,5 +614,74 @@ func registerSearchTools(s *server.MCPServer, client *sshclient.Client) {
 		}
 
 		return mcp.NewToolResultText(outText), nil
+	})
+}
+
+func registerTunnelTools(s *server.MCPServer, client *sshclient.Client) {
+	// 12. remote_tunnel
+	tunnelTool := mcp.NewTool("remote_tunnel",
+		mcp.WithDescription("Manage SSH port forwarding tunnels (forward remote ports to local machine)."),
+		mcp.WithString("action", mcp.Description("The action to perform: 'open', 'close', or 'list' (Required, alias: Action).")),
+		mcp.WithString("Action", mcp.Description("Alias for action.")),
+		mcp.WithInteger("localPort", mcp.Description("Local port to bind on 127.0.0.1 (0 for automatic available port, alias: LocalPort).")),
+		mcp.WithInteger("LocalPort", mcp.Description("Alias for localPort.")),
+		mcp.WithString("remoteHost", mcp.Description("Target host from remote viewpoint (default 127.0.0.1, alias: RemoteHost).")),
+		mcp.WithString("RemoteHost", mcp.Description("Alias for remoteHost.")),
+		mcp.WithInteger("remotePort", mcp.Description("Target port on remote host to forward to (Required for 'open', alias: RemotePort).")),
+		mcp.WithInteger("RemotePort", mcp.Description("Alias for remotePort.")),
+		mcp.WithString("tunnelId", mcp.Description("Tunnel ID (e.g. 'tun-1'). Required for 'close' (alias: TunnelId).")),
+		mcp.WithString("TunnelId", mcp.Description("Alias for tunnelId.")),
+	)
+
+	s.AddTool(tunnelTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		action := getParamString(request, "action", "Action")
+		if action == "" {
+			return mcp.NewToolResultError("action is required"), nil
+		}
+		tunMgr := client.TunnelManager()
+
+		switch action {
+		case "open":
+			remotePort := getParamInt(request, 0, "remotePort", "RemotePort")
+			if remotePort <= 0 {
+				return mcp.NewToolResultError("remotePort is required and must be > 0 for 'open' action"), nil
+			}
+			localPort := getParamInt(request, 0, "localPort", "LocalPort")
+			remoteHost := getParamString(request, "remoteHost", "RemoteHost")
+			if remoteHost == "" {
+				remoteHost = "127.0.0.1"
+			}
+
+			tun, err := tunMgr.Open(localPort, remoteHost, remotePort)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to open tunnel: %v", err)), nil
+			}
+
+			res := map[string]any{
+				"message":    fmt.Sprintf("Tunnel established: 127.0.0.1:%d -> %s:%d", tun.LocalPort, tun.RemoteHost, tun.RemotePort),
+				"tunnel":     tun,
+				"access_url": fmt.Sprintf("http://127.0.0.1:%d", tun.LocalPort),
+			}
+			out, _ := json.MarshalIndent(res, "", "  ")
+			return mcp.NewToolResultText(string(out)), nil
+
+		case "close":
+			tunnelID := getParamString(request, "tunnelId", "TunnelId", "id")
+			if tunnelID == "" {
+				return mcp.NewToolResultError("tunnelId is required for 'close' action"), nil
+			}
+			if err := tunMgr.Close(tunnelID); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to close tunnel: %v", err)), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("Tunnel %s closed successfully", tunnelID)), nil
+
+		case "list":
+			list := tunMgr.List()
+			out, _ := json.MarshalIndent(list, "", "  ")
+			return mcp.NewToolResultText(string(out)), nil
+
+		default:
+			return mcp.NewToolResultError(fmt.Sprintf("Unknown action: %s", action)), nil
+		}
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -119,4 +120,24 @@ func (tm *TaskManager) Kill(id string) error {
 		_ = t.Session.Close()
 	}
 	return nil
+}
+
+func (t *Task) Tail(lines int) (stdoutTail, stderrTail string) {
+	if lines <= 0 {
+		lines = 50
+	}
+	stdoutTail = tailLines(t.Stdout.String(), lines)
+	stderrTail = tailLines(t.Stderr.String(), lines)
+	return stdoutTail, stderrTail
+}
+
+func tailLines(s string, n int) string {
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(parts) <= n {
+		return s
+	}
+	return strings.Join(parts[len(parts)-n:], "\n") + "\n"
 }

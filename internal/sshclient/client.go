@@ -18,6 +18,7 @@ type Client struct {
 	sshClient  *ssh.Client
 	sftpClient *sftp.Client
 	taskMgr    *TaskManager
+	tunnelMgr  *TunnelManager
 	mu         sync.Mutex
 	cwdMu      sync.RWMutex
 	currentCwd string
@@ -29,6 +30,7 @@ func NewClient(cfg *config.Config) *Client {
 		taskMgr:    NewTaskManager(),
 		currentCwd: cfg.WorkDir,
 	}
+	c.tunnelMgr = NewTunnelManager(c.SSH)
 
 	if cfg.Host != "" {
 		if err := c.Connect(); err != nil {
@@ -182,6 +184,10 @@ func (c *Client) TaskManager() *TaskManager {
 	return c.taskMgr
 }
 
+func (c *Client) TunnelManager() *TunnelManager {
+	return c.tunnelMgr
+}
+
 func (c *Client) SFTP() (*sftp.Client, error) {
 	if err := c.EnsureConnected(); err != nil {
 		return nil, err
@@ -199,6 +205,9 @@ func (c *Client) SSH() (*ssh.Client, error) {
 func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.tunnelMgr != nil {
+		c.tunnelMgr.CloseAll()
+	}
 	if c.sftpClient != nil {
 		_ = c.sftpClient.Close()
 	}

@@ -350,3 +350,75 @@ func (c *Client) ResolvePath(p string) string {
 	}
 	return filepath.Clean(filepath.Join(c.GetCwd(), p))
 }
+
+func (c *Client) UploadFile(localPath, remotePath string, overwrite bool) (int64, error) {
+	sftpCli, err := c.SFTP()
+	if err != nil {
+		return 0, err
+	}
+
+	srcFile, err := os.Open(localPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open local file %s: %w", localPath, err)
+	}
+	defer srcFile.Close()
+
+	remotePath = c.ResolvePath(remotePath)
+	dir := filepath.Dir(remotePath)
+	if err := c.mkdirAll(dir); err != nil {
+		return 0, fmt.Errorf("failed to create remote directory %s: %w", dir, err)
+	}
+
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if !overwrite {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+
+	dstFile, err := sftpCli.OpenFile(remotePath, flags)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open remote file %s: %w", remotePath, err)
+	}
+	defer dstFile.Close()
+
+	n, err := io.Copy(dstFile, srcFile)
+	if err != nil {
+		return n, fmt.Errorf("failed to upload file: %w", err)
+	}
+	return n, nil
+}
+
+func (c *Client) DownloadFile(remotePath, localPath string, overwrite bool) (int64, error) {
+	sftpCli, err := c.SFTP()
+	if err != nil {
+		return 0, err
+	}
+
+	remotePath = c.ResolvePath(remotePath)
+	srcFile, err := sftpCli.Open(remotePath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open remote file %s: %w", remotePath, err)
+	}
+	defer srcFile.Close()
+
+	localDir := filepath.Dir(localPath)
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return 0, fmt.Errorf("failed to create local directory %s: %w", localDir, err)
+	}
+
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if !overwrite {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+
+	dstFile, err := os.OpenFile(localPath, flags, 0644)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open local file %s: %w", localPath, err)
+	}
+	defer dstFile.Close()
+
+	n, err := io.Copy(dstFile, srcFile)
+	if err != nil {
+		return n, fmt.Errorf("failed to download file: %w", err)
+	}
+	return n, nil
+}

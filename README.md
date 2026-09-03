@@ -151,9 +151,9 @@ flowchart TD
 
 ---
 
-## 🛠️ The 11 Agent Primitives
+## 🛠️ The 14 Agent Primitives
 
-`mcp-ssh-workspace` exposes 11 surgical tools specifically tailored to LLM reasoning:
+`mcp-ssh-workspace` exposes 14 surgical tools specifically tailored to LLM reasoning:
 
 ### 1. Connection & Session Lifecycle
 - **`remote_connect`**: Dynamically connect or switch between remote hosts at runtime. Auto-resolves hosts, ports, identity files, and proxies from `~/.ssh/config`.
@@ -161,18 +161,25 @@ flowchart TD
 - **`remote_session_info`**: Fetch remote host environment metadata (`/etc/os-release`, `uname -mrs`, active user, and persistent `cwd`).
 
 ### 2. Terminal & Process Supervision
-- **`remote_run_command`**: Execute bash commands with clean `stdout`/`stderr` separation, exit code capture, and persistent directory retention.
-- **`remote_manage_task`**: Manage long-running daemons and dev servers (`action: "list" | "status" | "kill" | "send_input"`).
+- **`remote_run_command`**: Execute commands with clean `stdout`/`stderr` separation, exit code capture, and persistent directory retention (POSIX & Fish shell safe).
+- **`remote_manage_task`**: Manage long-running daemons, test runners, and dev servers (`action: "list" | "status" | "tail" | "kill" | "send_input"`).
+  - Use `action: "tail"` with `lines: 50` to inspect live progress of long builds without token blowout!
 
-### 3. Surgical SFTP File Operations
-- **`remote_view_file`**: Read files with token-safe line ranges (`StartLine` to `EndLine`), line numbering, and byte budget protections.
+### 3. Surgical SFTP File Operations & Streaming Sync
+- **`remote_view_file`**: Read files with token-safe line ranges (`startLine` to `endLine`), line numbering, and byte budget protections.
 - **`remote_replace_file_content`**: Surgically replace an exact code block without rewriting or risking whole-file corruption.
 - **`remote_write_file`**: Atomically create or overwrite remote files with automatic recursive directory creation (`mkdir -p`).
+- **`remote_upload_file`**: Stream upload local files to the remote workspace via high-speed SFTP pipeline.
+- **`remote_download_file`**: Stream download remote files directly to the local filesystem with bit-for-bit integrity.
 - **`remote_list_dir`**: Inspect remote directory listings with exact byte sizes, POSIX permissions, and modification timestamps.
 
 ### 4. High-Performance Code Search
 - **`remote_grep_search`**: Fast regex search across the remote workspace (automatically uses `rg` if present, fallback to `grep -rn`).
-- **`remote_find_by_name`**: Fast file and directory glob finding (automatically uses `fd` if present, fallback to `find`).
+- **`remote_find_by_name`**: Fast file and directory glob finding with smart dotfile matching (automatically uses `fd` if present, fallback to `find`).
+
+### 5. Dynamic Port Forwarding & Networking
+- **`remote_tunnel`**: Establish local-to-remote SSH port forwarding tunnels (`action: "open" | "close" | "list"`).
+  - Open a remote web app, API, or database directly to `http://127.0.0.1:<port>` for browser inspection, Playwright testing, or local curl!
 
 ---
 
